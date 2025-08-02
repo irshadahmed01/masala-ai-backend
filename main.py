@@ -2,13 +2,11 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 import boto3
 import os
-from dotenv import load_dotenv
 import json
-
-load_dotenv()
 
 app = FastAPI()
 
+# Enable CORS (Allow any frontend to access)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,10 +19,14 @@ app.add_middleware(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RECIPE_PATH = os.path.join(BASE_DIR, "recipes.json")
 
-with open(RECIPE_PATH, encoding="utf-8") as f:
-    RECIPES = json.load(f)
+try:
+    with open(RECIPE_PATH, encoding="utf-8") as f:
+        RECIPES = json.load(f)
+except Exception as e:
+    RECIPES = []
+    print(f"⚠️ Failed to load recipes.json: {e}")
 
-# Whitelist of food ingredients (Telangana + common India-wide)
+# Ingredient whitelist
 FOOD_INGREDIENTS = {
     "spinach", "fenugreek leaves", "amaranth leaves", "mustard greens", "goosefoot", "malabar spinach",
     "dill leaves", "sorrel leaves", "purslane", "drumstick leaves", "colocasia leaves", "coriander leaves",
@@ -37,73 +39,32 @@ FOOD_INGREDIENTS = {
     "spring onion", "leek", "asparagus", "celery", "green peas", "french beans", "cluster beans",
     "broad beans", "cowpea pods", "drumstick", "guar beans", "cauliflower", "broccoli", "banana flower",
     "moringa flower", "pumpkin flower", "mushroom", "chicken", "egg", "toor dal", "moong dal", "coconut",
-    "mustard seeds", "cumin", "sambar powder", "curry leaves", "black pepper", "peanuts", "sesame seeds",
+    "mustard seeds", "cumin", "sambar powder", "black pepper", "peanuts", "sesame seeds",
     "chilli powder", "ginger garlic paste"
 }
 
-# Synonyms and normalizations
+# Synonym mapping
 LABEL_SYNONYMS = {
-    "brinjal": "eggplant",
-    "aubergine": "eggplant",
-    "okra": "ladies finger",
-    "green chili": "green chilli",
-    "green pepper": "green chilli",
-    "bell pepper": "capsicum",
-    "chili pepper": "green chilli",
-    "bitter melon": "bitter gourd",
-    "ridge gourd": "ridge gourd",
-    "bottle gourd": "bottle gourd",
-    "gourds": None,
-    "leaf": None,
-    "vegetable": None,
-    "produce": None,
-    "plant": None,
-    "dish": None,
-    "meal": None,
-
-    # Indian local names → English
-    "palak": "spinach",
-    "methi": "fenugreek leaves",
-    "thotakura": "amaranth leaves",
-    "sarson": "mustard greens",
-    "bathua": "goosefoot",
-    "bachali": "malabar spinach",
-    "gongura": "sorrel leaves",
-    "chukka kura": "sorrel leaves",
-    "gangavalli": "purslane",
-    "payala kura": "purslane",
-    "karivepaku": "curry leaves",
-    "menthikura": "fenugreek leaves",
-    "pudina": "mint leaves",
-    "kothimeera": "coriander leaves",
-    "ulligadda": "onion",
-    "tamatar": "tomato",
-    "dondakaya": "ivy gourd",
-    "beerakaya": "ridge gourd",
-    "sorakaya": "bottle gourd",
-    "potlakaya": "snake gourd",
-    "kakarakaya": "bitter gourd",
-    "gummadikaya": "pumpkin",
-    "aratikaya": "raw banana",
-    "panasa": "raw jackfruit",
-    "usirikaya": "indian gooseberry",
-    "bangala dumpa": "potato",
-    "chamadumpa": "taro root",
-    "kanda gadda": "elephant foot yam",
-    "mullangi": "radish",
-    "batani": "green peas",
-    "mulakkada": "drumstick",
-    "bottle gourd (anapakaya)": "bottle gourd",
-    "broad beans": "broad beans",
-    "cowpeas": "cowpea pods",
-    "cauliflower": "cauliflower",
-    "putta godugulu": "mushroom",
-    "vellulli": "garlic",
-    "allam": "ginger",
-    "raw jackfruit": "raw jackfruit"
+    "brinjal": "eggplant", "aubergine": "eggplant", "okra": "ladies finger",
+    "green chili": "green chilli", "green pepper": "green chilli", "bell pepper": "capsicum",
+    "bitter melon": "bitter gourd", "gourds": None, "leaf": None, "vegetable": None,
+    "produce": None, "plant": None, "dish": None, "meal": None,
+    "palak": "spinach", "methi": "fenugreek leaves", "thotakura": "amaranth leaves",
+    "sarson": "mustard greens", "bathua": "goosefoot", "bachali": "malabar spinach",
+    "gongura": "sorrel leaves", "chukka kura": "sorrel leaves", "gangavalli": "purslane",
+    "payala kura": "purslane", "karivepaku": "curry leaves", "menthikura": "fenugreek leaves",
+    "pudina": "mint leaves", "kothimeera": "coriander leaves", "ulligadda": "onion",
+    "tamatar": "tomato", "dondakaya": "ivy gourd", "beerakaya": "ridge gourd",
+    "sorakaya": "bottle gourd", "potlakaya": "snake gourd", "kakarakaya": "bitter gourd",
+    "gummadikaya": "pumpkin", "aratikaya": "raw banana", "panasa": "raw jackfruit",
+    "usirikaya": "indian gooseberry", "bangala dumpa": "potato", "chamadumpa": "taro root",
+    "kanda gadda": "elephant foot yam", "mullangi": "radish", "batani": "green peas",
+    "mulakkada": "drumstick", "broad beans": "broad beans", "cowpeas": "cowpea pods",
+    "cauliflower": "cauliflower", "putta godugulu": "mushroom", "vellulli": "garlic",
+    "allam": "ginger", "raw jackfruit": "raw jackfruit"
 }
 
-# Initialize AWS Rekognition
+# Initialize Rekognition
 rekognition = boto3.client(
     "rekognition",
     aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
@@ -117,15 +78,20 @@ async def detect_and_suggest(file: UploadFile = File(...)):
 
     content = await file.read()
 
-    response = rekognition.detect_labels(
-        Image={"Bytes": content},
-        MaxLabels=30,
-        MinConfidence=70
-    )
+    try:
+        response = rekognition.detect_labels(
+            Image={"Bytes": content},
+            MaxLabels=30,
+            MinConfidence=70
+        )
+    except Exception as e:
+        return {
+            "error": f"Rekognition failed: {str(e)}"
+        }
 
-    labels = [label["Name"].lower() for label in response["Labels"]]
-    print("\n🧠 AWS Rekognition Labels:")
-    for label in response["Labels"]:
+    labels = [label["Name"].lower() for label in response.get("Labels", [])]
+    print("\n🧠 Detected Labels:")
+    for label in response.get("Labels", []):
         print(f" - {label['Name']} ({label['Confidence']:.1f}%)")
 
     normalized_labels = []
@@ -157,11 +123,7 @@ async def detect_and_suggest(file: UploadFile = File(...)):
                 "total_ingredients": len(recipe["ingredients"])
             })
 
-    sorted_recipes = sorted(
-        recipe_scores,
-        key=lambda x: (-x["match_count"], x["total_ingredients"])
-    )
-
+    sorted_recipes = sorted(recipe_scores, key=lambda x: (-x["match_count"], x["total_ingredients"]))
     matching_recipes = [entry["recipe"] for entry in sorted_recipes]
 
     return {
