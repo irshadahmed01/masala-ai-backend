@@ -2,7 +2,10 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 import boto3
 import os
+from dotenv import load_dotenv
 import json
+
+load_dotenv()
 
 app = FastAPI()
 
@@ -21,7 +24,7 @@ RECIPE_PATH = os.path.join(BASE_DIR, "recipes.json")
 with open(RECIPE_PATH, encoding="utf-8") as f:
     RECIPES = json.load(f)
 
-# Whitelist of food ingredients
+# Whitelist of food ingredients (Telangana + common India-wide)
 FOOD_INGREDIENTS = {
     "spinach", "fenugreek leaves", "amaranth leaves", "mustard greens", "goosefoot", "malabar spinach",
     "dill leaves", "sorrel leaves", "purslane", "drumstick leaves", "colocasia leaves", "coriander leaves",
@@ -57,6 +60,8 @@ LABEL_SYNONYMS = {
     "plant": None,
     "dish": None,
     "meal": None,
+
+    # Indian local names → English
     "palak": "spinach",
     "methi": "fenugreek leaves",
     "thotakura": "amaranth leaves",
@@ -98,8 +103,13 @@ LABEL_SYNONYMS = {
     "raw jackfruit": "raw jackfruit"
 }
 
-# 🔧 Let boto3 automatically pick credentials from environment
-rekognition = boto3.client("rekognition")
+# Initialize AWS Rekognition
+rekognition = boto3.client(
+    "rekognition",
+    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+    region_name=os.getenv("AWS_REGION")
+)
 
 @app.post("/detect_and_suggest")
 async def detect_and_suggest(file: UploadFile = File(...)):
